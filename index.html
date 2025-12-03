@@ -1,384 +1,267 @@
 <!DOCTYPE html>
 <html lang="de">
 <head>
-    <meta charset="UTF-8" />
-    <title>VRM Viewer VR — Debug (load button)</title>
-    <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <style>
-        html,body { height:100%; margin:0; }
-        body { font-family: Arial, sans-serif; overflow: hidden; }
-        #ui {
-            position: absolute;
-            top: 8px;
-            left: 8px;
-            z-index: 50;
-            width: 380px;
-            max-height: calc(100vh - 16px);
-            background: rgba(0,0,0,0.78);
-            color: #fff;
-            padding: 10px;
-            border-radius: 8px;
-            box-sizing: border-box;
-            overflow: hidden;
-        }
-        #controls { margin-bottom:8px; display:flex; gap:6px; align-items:center; }
-        #file { flex:1; }
-        #log {
-            background: rgba(255,255,255,0.03);
-            border-radius:6px;
-            padding:8px;
-            height: 55vh;
-            overflow:auto;
-            font-size: 12px;
-            line-height:1.3;
-        }
-        #log .err { color:#ff9b9b; }
-        #log .ok { color:#9bffb2; }
-        #log .meta { color:#ccc; font-size: 11px; }
-        #actions { margin-top:8px; display:flex; gap:8px; }
-        button { padding:6px; border-radius:6px; border: none; cursor: pointer; background:#333; color:white; }
-        button.primary { background:#2a9df4; }
-        button.warn { background:#f48b2a; }
-        #urlRow { display:flex; gap:6px; margin-top:6px; }
-        input[type="text"] { flex:1; padding:6px; border-radius:6px; border:1px solid #444; background:#111; color:#fff; }
-        .hint { font-size:12px; color:#ddd; margin-top:6px; }
-    </style>
+  <meta charset="utf-8" />
+  <title>VRM Viewer — Quick Debug</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+    html,body{height:100%;margin:0}
+    body{font-family:Arial,Helvetica,sans-serif;background:#111;color:#eee;overflow:hidden}
+    #ui{position:absolute;left:10px;top:10px;width:380px;background:rgba(0,0,0,0.8);padding:10px;border-radius:8px;z-index:50}
+    #ui h1{font-size:14px;margin:0 0 8px 0}
+    #controls{display:flex;gap:6px;margin-bottom:8px}
+    input[type=file]{flex:1}
+    button{background:#2b2b2b;border:1px solid #333;color:#eee;padding:6px;border-radius:6px;cursor:pointer}
+    button.primary{background:#2a9df4}
+    button.success{background:#3bbf7c}
+    #log{background:#0b0b0b;border:1px solid #222;padding:8px;height:56vh;overflow:auto;font-size:12px;line-height:1.3;border-radius:6px}
+    .meta{color:#9aa}
+    .ok{color:#6f6}
+    .err{color:#f88}
+    .small{font-size:12px;color:#aaa;margin-top:6px}
+    #canvasWrap{position:fixed;right:0;top:0;bottom:0;left:420px;background:#222}
+    canvas{width:100%;height:100%;display:block}
+  </style>
 </head>
 <body>
-    <div id="ui" role="region" aria-label="VRM Debug UI">
-        <div id="controls">
-            <input id="file" type="file" accept=".vrm" />
-            <button id="loadSelected" class="primary">Load selected file</button>
-        </div>
+  <div id="ui" role="region" aria-label="VRM Debug UI">
+    <h1>VRM Quick Debug</h1>
 
-        <div id="urlRow">
-            <input id="urlInput" type="text" placeholder="Optional: URL zu einer VRM (https://...)" />
-            <button id="loadUrl">Load URL</button>
-        </div>
-
-        <div class="hint">Wähle eine Datei und tippe danach auf "Load selected file". Wenn die Log-Box keine Dateien sieht, poste den Log hier.</div>
-
-        <div id="log" aria-live="polite">
-            <div class="meta">Status: Warten auf Datei-Auswahl</div>
-        </div>
-
-        <div id="actions" style="margin-top:8px;">
-            <button id="clear">Log löschen</button>
-            <button id="copy">Log kopieren</button>
-            <button id="test" class="warn">Test createObjectURL</button>
-        </div>
+    <div id="controls">
+      <input id="fileInput" type="file" accept=".vrm" />
+      <button id="loadSelected" class="primary">Load selected file</button>
     </div>
 
-    <script type="module">
-        import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.163/build/three.module.js";
-        import { OrbitControls } from "https://cdn.jsdelivr.net/npm/three@0.163/examples/jsm/controls/OrbitControls.js";
-        import { VRButton } from "https://cdn.jsdelivr.net/npm/three@0.163/examples/jsm/webxr/VRButton.js";
-        import { VRMLoader } from "https://cdn.jsdelivr.net/npm/@pixiv/three-vrm@2.0.6/lib/three-vrm.module.js";
+    <div style="display:flex;gap:6px;margin-bottom:8px">
+      <button id="systemPicker">System‑Picker</button>
+      <button id="testBlob">Test createObjectURL</button>
+      <button id="copyLog" class="success">Log kopieren</button>
+    </div>
 
-        // three.js basics
-        const scene = new THREE.Scene();
-        scene.background = new THREE.Color(0x222222);
-        const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.01, 200);
-        camera.position.set(0, 1.6, 2);
-        const renderer = new THREE.WebGLRenderer({ antialias: true });
-        renderer.setSize(window.innerWidth, window.innerHeight);
-        renderer.setPixelRatio(window.devicePixelRatio || 1);
-        renderer.xr.enabled = true;
-        renderer.outputEncoding = THREE.sRGBEncoding;
-        document.body.appendChild(renderer.domElement);
-        document.body.appendChild(VRButton.createButton(renderer));
-        const controls = new OrbitControls(camera, renderer.domElement);
-        controls.target.set(0, 1.4, 0);
-        controls.update();
-        scene.add(new THREE.GridHelper(10, 10, 0x444444, 0x222222));
-        scene.add(new THREE.AxesHelper(0.6));
-        scene.add(new THREE.DirectionalLight(0xffffff, 1.2));
-        scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 0.6));
+    <div id="log" aria-live="polite">
+      <div class="meta">Status: bereit</div>
+    </div>
 
-        window.addEventListener('resize', () => {
-            camera.aspect = window.innerWidth / window.innerHeight;
-            camera.updateProjectionMatrix();
-            renderer.setSize(window.innerWidth, window.innerHeight);
-        });
+    <div class="small">Anleitung: Datei auswählen → dann "Load selected file" drücken. Wenn nichts passiert: System‑Picker probieren. Log kopieren und hier posten.</div>
+  </div>
 
-        // UI refs
-        const fileInput = document.getElementById('file');
-        const loadSelectedBtn = document.getElementById('loadSelected');
-        const urlInput = document.getElementById('urlInput');
-        const loadUrlBtn = document.getElementById('loadUrl');
-        const logEl = document.getElementById('log');
-        const clearBtn = document.getElementById('clear');
-        const copyBtn = document.getElementById('copy');
-        const testBtn = document.getElementById('test');
+  <div id="canvasWrap"></div>
 
-        function appendLog(text, cls) {
-            const d = document.createElement('div');
-            d.textContent = text;
-            if (cls) d.className = cls;
-            logEl.prepend(d);
+  <script type="module">
+    import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.163/build/three.module.js";
+    import { OrbitControls } from "https://cdn.jsdelivr.net/npm/three@0.163/examples/jsm/controls/OrbitControls.js";
+    import { VRButton } from "https://cdn.jsdelivr.net/npm/three@0.163/examples/jsm/webxr/VRButton.js";
+    import { VRMLoader } from "https://cdn.jsdelivr.net/npm/@pixiv/three-vrm@2.0.6/lib/three-vrm.module.js";
+
+    // UI
+    const fileInput = document.getElementById('fileInput');
+    const loadSelectedBtn = document.getElementById('loadSelected');
+    const systemPickerBtn = document.getElementById('systemPicker');
+    const testBlobBtn = document.getElementById('testBlob');
+    const copyLogBtn = document.getElementById('copyLog');
+    const logEl = document.getElementById('log');
+
+    function log(text, cls) {
+      const d = document.createElement('div');
+      d.textContent = text;
+      if (cls) d.className = cls;
+      logEl.prepend(d);
+    }
+    function status(text) {
+      const m = document.createElement('div');
+      m.className = 'meta';
+      m.textContent = 'Status: ' + text;
+      logEl.prepend(m);
+    }
+
+    // show some environment info
+    status('ready');
+    log('UserAgent: ' + navigator.userAgent, 'meta');
+    log('showOpenFilePicker supported: ' + (typeof window.showOpenFilePicker === 'function'), 'meta');
+
+    // three.js minimal canvas so you can at least see background
+    const canvasWrap = document.getElementById('canvasWrap');
+    const renderer = new THREE.WebGLRenderer({ antialias:true });
+    renderer.setSize(window.innerWidth - 420, window.innerHeight);
+    renderer.setPixelRatio(window.devicePixelRatio || 1);
+    canvasWrap.appendChild(renderer.domElement);
+    // scene simple
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x333333);
+    const camera = new THREE.PerspectiveCamera(60, (window.innerWidth - 420) / window.innerHeight, 0.01, 200);
+    camera.position.set(0,1.6,2);
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.target.set(0,1.4,0);
+    controls.update();
+    scene.add(new THREE.HemisphereLight(0xffffff,0x444444,0.6));
+    scene.add(new THREE.DirectionalLight(0xffffff,1.0).position.set(1,2,1));
+    scene.add(new THREE.GridHelper(4,4,0x444444,0x222222));
+    window.addEventListener('resize', ()=> {
+      renderer.setSize(window.innerWidth - 420, window.innerHeight);
+      camera.aspect = (window.innerWidth - 420) / window.innerHeight;
+      camera.updateProjectionMatrix();
+    });
+
+    // VRM loader (we only log events here for now)
+    const vrmLoader = new VRMLoader();
+    let currentVRM = null;
+    let vrmBlobUrl = null;
+
+    // file input events
+    fileInput.addEventListener('click', () => log('file input clicked', 'meta'));
+    fileInput.addEventListener('change', (e) => {
+      log('file input change event fired', 'meta');
+      logFileList();
+    });
+    fileInput.addEventListener('input', () => {
+      log('file input input event fired', 'meta');
+      logFileList();
+    });
+
+    function logFileList() {
+      const files = fileInput.files;
+      if (!files) {
+        log('fileInput.files is null/undefined', 'err'); return;
+      }
+      log('fileInput.files.length = ' + files.length, 'meta');
+      for (let i=0;i<files.length;i++){
+        const f = files[i];
+        log('['+i+'] ' + f.name + ' (' + Math.round(f.size/1024) + ' KB) type=' + (f.type||'n/a'), 'meta');
+      }
+      if (files.length === 0) status('keine Datei im input vorhanden');
+      else status(files.length + ' Datei(en) ausgewählt');
+    }
+
+    // manual load selected file button
+    loadSelectedBtn.addEventListener('click', async () => {
+      log('Load selected file button clicked', 'meta');
+      const f = fileInput.files && fileInput.files[0];
+      if (!f) { log('Kein File im input gefunden — Datei angetippt? Wenn nicht, System‑Picker probieren.', 'err'); status('keine Datei'); return; }
+      log('Lade Datei per Button: ' + f.name, 'meta');
+      await tryLoadFile(f);
+    });
+
+    // system picker
+    systemPickerBtn.addEventListener('click', async () => {
+      log('System‑Picker button clicked', 'meta');
+      if (!window.showOpenFilePicker) { log('showOpenFilePicker nicht unterstützt', 'err'); status('Kein System‑Picker'); return; }
+      try {
+        const [handle] = await window.showOpenFilePicker({ multiple:false, types:[{description:'VRM', accept:{'model/gltf-binary':['.vrm','.glb']}}] });
+        const file = await handle.getFile();
+        log('System‑Picker lieferte: ' + file.name, 'meta');
+        await tryLoadFile(file);
+      } catch (e) {
+        log('System‑Picker abgebrochen / Fehler: ' + (e && e.message? e.message : e), 'err');
+        status('Picker abgebrochen');
+      }
+    });
+
+    testBlobBtn.addEventListener('click', () => {
+      try {
+        const b = new Blob(['hi']);
+        const u = URL.createObjectURL(b);
+        log('createObjectURL OK: ' + u, 'ok');
+        URL.revokeObjectURL(u);
+        log('revokeObjectURL OK', 'ok');
+        status('Blob API OK');
+      } catch (e) {
+        log('createObjectURL Fehler: ' + (e && e.message? e.message : e), 'err');
+        status('Blob API Fehler');
+      }
+    });
+
+    copyLogBtn.addEventListener('click', async () => {
+      const txt = logEl.innerText || logEl.textContent;
+      try {
+        await navigator.clipboard.writeText(txt);
+        status('Log in Zwischenablage');
+      } catch (e) {
+        log('Clipboard write failed: ' + e, 'err');
+        window.prompt('Copy log', txt);
+      }
+    });
+
+    async function tryLoadFile(file) {
+      status('Lese Datei: ' + file.name);
+      try {
+        // debug read
+        const arr = await file.arrayBuffer();
+        log('ArrayBuffer gelesen (' + arr.byteLength + ' bytes)', 'meta');
+
+        // create blob url
+        try {
+          vrmBlobUrl = URL.createObjectURL(file);
+          log('Blob-URL erstellt: ' + vrmBlobUrl, 'meta');
+        } catch (e) {
+          log('createObjectURL failed: ' + (e && e.message ? e.message : e), 'err');
+          vrmBlobUrl = null;
         }
-        function setStatus(text) {
-            const meta = document.createElement('div');
-            meta.className = 'meta';
-            meta.textContent = 'Status: ' + text;
-            logEl.prepend(meta);
+
+        // Try parse directly (safe)
+        try {
+          log('Versuche vrmLoader.parse(arrayBuffer) ...');
+          await new Promise((resolve, reject) => {
+            vrmLoader.parse(arr, '', (vrm) => { resolve(vrm); }, (err) => reject(err));
+          });
+          log('parse OK (VRM wahrscheinlich gültig)', 'ok');
+          status('VRM lesbar (parse OK) — Model wird noch nicht dargestellt in Debug'); 
+        } catch (e) {
+          log('parse Fehler: ' + (e && e.message ? e.message : e), 'err');
+          status('parse Fehler');
         }
 
-        clearBtn.addEventListener('click', () => { logEl.innerHTML = ''; setStatus('Log gelöscht'); });
-        copyBtn.addEventListener('click', () => {
-            const txt = logEl.innerText || logEl.textContent;
-            if (navigator.clipboard && navigator.clipboard.writeText) {
-                navigator.clipboard.writeText(txt).then(() => setStatus('Log kopiert'), (e) => appendLog('Clipboard Fehler: '+e, 'err'));
+        // Also try loadAsync if blob url was created
+        if (vrmBlobUrl) {
+          try {
+            log('Versuche vrmLoader.loadAsync(blobUrl) ...');
+            const vrm = await vrmLoader.loadAsync(vrmBlobUrl);
+            log('loadAsync erfolgreich, VRM geladen', 'ok');
+            // if successful, add to scene
+            if (vrm && vrm.scene) {
+              // remove existing
+              if (currentVRM && currentVRM.scene) scene.remove(currentVRM.scene);
+              currentVRM = vrm;
+              vrm.scene.rotation.y = Math.PI;
+              scene.add(vrm.scene);
+              status('VRM in Szene hinzugefügt: ' + file.name);
             } else {
-                window.prompt('Copy the log below', txt);
+              log('loadAsync returned object without .scene', 'err');
+              status('Geladen aber keine scene');
             }
-        });
-
-        // detect file input events
-        fileInput.addEventListener('change', (e) => {
-            appendLog('file input "change" event fired', 'meta');
-            logFileList();
-        });
-        fileInput.addEventListener('input', (e) => {
-            appendLog('file input "input" event fired', 'meta');
-            logFileList();
-        });
-        fileInput.addEventListener('click', (e) => {
-            appendLog('file input "click" event fired (user opened picker?)', 'meta');
-        });
-
-        function logFileList() {
-            const files = fileInput.files;
-            if (!files) {
-                appendLog('fileInput.files is null/undefined', 'err');
-                return;
-            }
-            appendLog('fileInput.files.length = ' + files.length, 'meta');
-            for (let i = 0; i < files.length; i++) {
-                const f = files[i];
-                appendLog(' - ['+i+'] ' + f.name + ' (' + Math.round(f.size/1024) + ' KB) type=' + (f.type || 'n/a'), 'meta');
-            }
-            if (files.length === 0) setStatus('Keine Datei im input vorhanden');
-            else setStatus(files.length + ' Datei(en) ausgewählt');
+            try { URL.revokeObjectURL(vrmBlobUrl); } catch(_) {}
+            vrmBlobUrl = null;
+            return;
+          } catch (e) {
+            log('loadAsync Fehler: ' + (e && e.message ? e.message : e), 'err');
+            status('loadAsync Fehler');
+          }
         }
 
-        // allow manual load of selected file (useful on browsers that don't fire change reliably)
-        loadSelectedBtn.addEventListener('click', () => {
-            appendLog('Load selected file button clicked', 'meta');
-            const f = fileInput.files && fileInput.files[0];
-            if (!f) {
-                appendLog('Kein File im input gefunden — tippe Datei an und dann Load selected file', 'err');
-                setStatus('Keine Datei zum Laden');
-                return;
-            }
-            appendLog('Lade Datei per Button: ' + f.name, 'meta');
-            handleFile(f);
-        });
+        // If none worked:
+        log('Fertig mit Laden-Versuchen (siehe oben). Falls du weiterhin "Warten" siehst: poste das komplette Log hier.', 'meta');
 
-        // Load from remote URL (for quick testing)
-        loadUrlBtn.addEventListener('click', async () => {
-            const url = (urlInput.value || '').trim();
-            if (!url) { appendLog('Keine URL eingegeben', 'err'); return; }
-            appendLog('Versuche Datei von URL zu laden: ' + url);
-            setStatus('Lade URL: ' + url);
-            try {
-                const res = await fetch(url);
-                if (!res.ok) { appendLog('Fetch failed: ' + res.status + ' ' + res.statusText, 'err'); setStatus('Fetch Fehler'); return; }
-                const buf = await res.arrayBuffer();
-                const blob = new Blob([buf]);
-                const file = new File([blob], url.split('/').pop() || 'remote.vrm', { type: 'application/octet-stream' });
-                appendLog('Remote-Datei heruntergeladen (' + buf.byteLength + ' bytes)', 'meta');
-                handleFile(file);
-            } catch (e) {
-                appendLog('Fetch error: ' + (e && e.message ? e.message : e), 'err');
-                setStatus('Fetch Fehler');
-            }
-        });
+      } catch (e) {
+        log('Fehler beim Lesen der Datei: ' + (e && e.message ? e.message : e), 'err');
+        status('Fehler');
+      }
+    }
 
-        testBtn.addEventListener('click', () => {
-            try {
-                const b = new Blob(['hi']);
-                const u = URL.createObjectURL(b);
-                appendLog('createObjectURL ok: ' + u, 'meta');
-                URL.revokeObjectURL(u);
-                appendLog('revokeObjectURL ok', 'meta');
-                setStatus('createObjectURL ok');
-            } catch (e) {
-                appendLog('createObjectURL Fehler: ' + (e && e.message ? e.message : e), 'err');
-                setStatus('createObjectURL Fehler');
-            }
-        });
+    // render loop
+    let last = null;
+    renderer.setAnimationLoop((time) => {
+      if (last === null) last = time;
+      const dt = Math.min(0.1, (time - last) / 1000);
+      last = time;
+      if (currentVRM && typeof currentVRM.update === 'function') {
+        try { currentVRM.update(dt); } catch (_) {}
+      }
+      renderer.render(scene, camera);
+    });
 
-        // VRM loader & logic (same logic as before)
-        const vrmLoader = new VRMLoader();
-        let currentVRM = null;
-        let vrmBlobUrl = null;
+    // global error handlers visible in UI
+    window.addEventListener('error', (e) => log('Window error: ' + (e && e.error && e.error.message ? e.error.message : (e && e.message ? e.message : 'unknown')), 'err'));
+    window.addEventListener('unhandledrejection', (ev) => log('UnhandledRejection: ' + (ev && ev.reason && ev.reason.message ? ev.reason.message : String(ev.reason)), 'err'));
 
-        async function handleFile(file) {
-            appendLog('handleFile: ' + file.name + ' (' + Math.round(file.size/1024) + ' KB)', 'meta');
-            setStatus('Lade VRM: ' + file.name);
-
-            // dispose previous
-            if (currentVRM) {
-                try { if (currentVRM.scene) scene.remove(currentVRM.scene); } catch(_) {}
-                currentVRM = null;
-                appendLog('Vorheriges VRM entfernt', 'meta');
-            }
-            if (vrmBlobUrl) { try { URL.revokeObjectURL(vrmBlobUrl); } catch(_) {} vrmBlobUrl = null; }
-
-            // Read header and try strategies
-            try {
-                const buf = await file.arrayBuffer();
-                appendLog('ArrayBuffer gelesen (' + buf.byteLength + ' bytes)', 'meta');
-
-                // create blob url if possible
-                try {
-                    vrmBlobUrl = URL.createObjectURL(file);
-                    appendLog('Blob-URL erstellt: ' + vrmBlobUrl, 'meta');
-                } catch (e) {
-                    appendLog('createObjectURL fehlgeschlagen: ' + (e && e.message ? e.message : e), 'err');
-                    vrmBlobUrl = null;
-                }
-
-                // Try loadAsync first
-                if (vrmBlobUrl) {
-                    try {
-                        appendLog('Versuche vrmLoader.loadAsync(blobUrl) ...');
-                        const vrm = await vrmLoader.loadAsync(vrmBlobUrl);
-                        appendLog('loadAsync erfolgreich', 'ok');
-                        try { URL.revokeObjectURL(vrmBlobUrl); } catch(_) {}
-                        vrmBlobUrl = null;
-                        handleLoadedVRM(vrm, file.name);
-                        return;
-                    } catch (e) {
-                        appendLog('loadAsync Fehler: ' + (e && e.message ? e.message : e), 'err');
-                    }
-                } else {
-                    appendLog('kein blob url — überspringe loadAsync', 'meta');
-                }
-
-                // Fallback parse
-                try {
-                    appendLog('Versuche vrmLoader.parse(ArrayBuffer) ...');
-                    await parseWithLoader(buf, file.name);
-                    return;
-                } catch (e) {
-                    appendLog('parse Fehler: ' + (e && e.message ? e.message : e), 'err');
-                }
-
-                // fallback fetch(blob) -> parse
-                if (vrmBlobUrl) {
-                    try {
-                        appendLog('Versuche fetch(blobUrl) und parse ...', 'meta');
-                        const res = await fetch(vrmBlobUrl);
-                        const ab = await res.arrayBuffer();
-                        appendLog('fetch success, bytes: ' + ab.byteLength, 'meta');
-                        await parseWithLoader(ab, file.name);
-                        try { URL.revokeObjectURL(vrmBlobUrl); } catch(_) {}
-                        vrmBlobUrl = null;
-                        return;
-                    } catch (e) {
-                        appendLog('fetch+parse Fehler: ' + (e && e.message ? e.message : e), 'err');
-                    } finally {
-                        try { URL.revokeObjectURL(vrmBlobUrl); } catch(_) {}
-                        vrmBlobUrl = null;
-                    }
-                }
-
-                appendLog('Alle Ladewege gescheitert', 'err');
-                setStatus('Keine VRM geladen');
-            } catch (e) {
-                appendLog('Fehler beim Lesen der Datei: ' + (e && e.message ? e.message : e), 'err');
-                setStatus('Fehler beim Lesen');
-            }
-        }
-
-        function parseWithLoader(arrayBuffer, filename) {
-            return new Promise((resolve, reject) => {
-                try {
-                    vrmLoader.parse(arrayBuffer, '', (vrm) => {
-                        appendLog('vrmLoader.parse erfolgreich', 'ok');
-                        handleLoadedVRM(vrm, filename);
-                        resolve(vrm);
-                    }, (err) => {
-                        reject(err || new Error('parse callback error'));
-                    });
-                } catch (ex) {
-                    reject(ex);
-                }
-            });
-        }
-
-        function handleLoadedVRM(vrm, filename) {
-            try { appendLog('Loaded object keys: ' + Object.keys(vrm).join(', '), 'meta'); } catch (_) {}
-            const sceneObj = (vrm && (vrm.scene || vrm.sceneGraph)) || null;
-            if (!sceneObj) {
-                appendLog('Geladenes Objekt hat keine scene-Eigenschaft! Keys: ' + Object.keys(vrm).join(', '), 'err');
-                currentVRM = vrm;
-                setStatus('Geladen, aber keine scene gefunden');
-                return;
-            }
-            sceneObj.position.set(0,0,0);
-            sceneObj.rotation.set(0, Math.PI, 0);
-            scene.add(sceneObj);
-            currentVRM = vrm;
-            sceneObj.traverse((c) => {
-                if (c.isMesh) {
-                    c.castShadow = true; c.receiveShadow = true;
-                    if (c.material) c.material.needsUpdate = true;
-                }
-            });
-            appendLog('VRM in Szene hinzugefügt: ' + filename, 'ok');
-            // bounding box
-            try {
-                const box = new THREE.Box3().setFromObject(sceneObj);
-                if (box.isEmpty()) {
-                    appendLog('BoundingBox ist leer (keine Geometrie gefunden?)', 'err');
-                } else {
-                    const size = new THREE.Vector3(); box.getSize(size);
-                    const center = new THREE.Vector3(); box.getCenter(center);
-                    appendLog('BoundingBox center=' + center.toArray().map(n => n.toFixed(2)).join(', ') + ' size=' + size.toArray().map(n => n.toFixed(2)).join(', '), 'meta');
-                    controls.target.copy(center); controls.update();
-                    const maxDim = Math.max(size.x, size.y, size.z);
-                    const fov = camera.fov * (Math.PI / 180);
-                    let distance = (maxDim / 2) / Math.tan(fov / 2);
-                    distance *= 1.6;
-                    const camPos = center.clone().add(new THREE.Vector3(0, Math.max(1.0, size.y*0.5), distance));
-                    camera.position.copy(camPos);
-                    camera.lookAt(center);
-                    camera.updateProjectionMatrix();
-                    appendLog('Kamera positioniert', 'meta');
-                }
-            } catch (e) {
-                appendLog('BoundingBox Fehler: ' + (e && e.message ? e.message : e), 'err');
-            }
-            setStatus('VRM geladen: ' + filename);
-        }
-
-        // render loop
-        let lastTime = null;
-        function animateLoop() {
-            renderer.setAnimationLoop((t) => {
-                if (lastTime === null) lastTime = t;
-                const dt = Math.min(0.1, (t - lastTime) / 1000);
-                lastTime = t;
-                if (currentVRM && typeof currentVRM.update === 'function') {
-                    try { currentVRM.update(dt); } catch (_) {}
-                }
-                renderer.render(scene, camera);
-            });
-        }
-        animateLoop();
-
-        // show window errors in overlay
-        window.addEventListener('error', (e) => {
-            appendLog('Window error: ' + (e && e.error && e.error.message ? e.error.message : (e && e.message ? e.message : 'unknown')), 'err');
-            setStatus('Window error');
-        });
-        window.addEventListener('unhandledrejection', (ev) => {
-            appendLog('UnhandledRejection: ' + (ev && ev.reason && ev.reason.message ? ev.reason.message : String(ev.reason)), 'err');
-            setStatus('Unhandled rejection');
-        });
-    </script>
+  </script>
 </body>
 </html>
