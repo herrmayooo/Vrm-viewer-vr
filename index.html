@@ -1,158 +1,103 @@
-<script type="module">
-// … keep your existing imports & init code … //
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <title>VRM Viewer VR</title>
+    <style>
+        body { margin: 0; overflow: hidden; }
+        #fileInput {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            z-index: 10;
+            background: white;
+            padding: 8px;
+            border-radius: 6px;
+            font-size: 14px;
+        }
+    </style>
+</head>
 
-/* -----------------------------
-    Bone Interaction System
------------------------------ */
+<body>
+    <!-- VRM Loader -->
+    <input type="file" id="fileInput" accept=".vrm" />
 
-let boneSpheres = [];
-let selectedBone = null;
+    <script type="module">
+        import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.163/build/three.module.js";
+        import { OrbitControls } from "https://cdn.jsdelivr.net/npm/three@0.163/examples/jsm/controls/OrbitControls.js";
+        import { VRButton } from "https://cdn.jsdelivr.net/npm/three@0.163/examples/jsm/webxr/VRButton.js";
+        import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.163/examples/jsm/loaders/GLTFLoader.js";
+        import { VRMLoaderPlugin, VRMUtils } from "https://cdn.jsdelivr.net/npm/@pixiv/three-vrm@2.0.6/lib/three-vrm.module.js";
 
-function createBoneColliders(vrm) {
-    boneSpheres.forEach(s => scene.remove(s));
-    boneSpheres = [];
+        let scene, camera, renderer, controls;
+        let currentVRM = null;
 
-    const bones = vrm.humanoid.humanBones;
+        const loader = new GLTFLoader();
+        loader.register((parser) => new VRMLoaderPlugin(parser));
 
-    for (const name in bones) {
-        const boneNode = vrm.humanoid.getBoneNode(name);
-        if (!boneNode) continue;
+        init();
+        animate();
 
-        const sphere = new THREE.Mesh(
-            new THREE.SphereGeometry(0.03),
-            new THREE.MeshBasicMaterial({ color: 0x00ffff })
-        );
+        function init() {
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x222222);
 
-        sphere.position.set(0, 0, 0);
-        boneNode.add(sphere);   // attach to bone
-        sphere.userData.boneName = name;
-        boneSpheres.push(sphere);
-    }
-}
+            camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 100);
+            camera.position.set(0, 1.4, 2);
 
-let raycaster = new THREE.Raycaster();
-let tempMatrix = new THREE.Matrix4();
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            renderer.xr.enabled = true;
 
-/* -----------------------------
-    Controller Setup
------------------------------ */
+            document.body.appendChild(renderer.domElement);
+            document.body.appendChild(VRButton.createButton(renderer));
 
-function setupControllers() {
-    leftController = renderer.xr.getController(0);
-    rightController = renderer.xr.getController(1);
+            controls = new OrbitControls(camera, renderer.domElement);
 
-    scene.add(leftController);
-    scene.add(rightController);
+            const light = new THREE.DirectionalLight(0xffffff, 1);
+            light.position.set(1, 1, 1);
+            scene.add(light);
 
-    leftController.addEventListener("selectstart", () => pickBone(leftController));
-    rightController.addEventListener("selectstart", () => pickBone(rightController));
+            const ambient = new THREE.HemisphereLight(0xffffff, 0x444444, 1);
+            scene.add(ambient);
 
-    leftController.addEventListener("selectend", () => dropBone(leftController));
-    rightController.addEventListener("selectend", () => dropBone(rightController));
-}
-
-/* -----------------------------
-    Bone Picking
------------------------------ */
-
-function pickBone(controller) {
-    if (!currentVRM) return;
-
-    // Convert controller orientation to a ray
-    tempMatrix.identity().extractRotation(controller.matrixWorld);
-    const rayOrigin = new THREE.Vector3().setFromMatrixPosition(controller.matrixWorld);
-    const rayDirection = new THREE.Vector3(0, 0, -1).applyMatrix4(tempMatrix);
-
-    raycaster.set(rayOrigin, rayDirection);
-
-    const intersects = raycaster.intersectObjects(boneSpheres, true);
-
-    if (intersects.length > 0) {
-        selectedBone = currentVRM.humanoid.getBoneNode(
-            intersects[0].object.userData.boneName
-        );
-
-        // highlight picked bone
-        intersects[0].object.material.color.set(0xff0000);
-    }
-}
-
-function dropBone(controller) {
-    selectedBone = null;
-}
-
-/* -----------------------------
-    Joystick Bone Manipulation
------------------------------ */
-
-function updateBoneManipulation() {
-    if (!selectedBone) return;
-
-    const session = renderer.xr.getSession();
-    if (!session) return;
-
-    const rightSource = session.inputSources[1];
-
-    if (rightSource && rightSource.gamepad) {
-        const gp = rightSource.gamepad;
-
-        const x = gp.axes[2]; // right joystick horizontal
-        const y = gp.axes[3]; // right joystick vertical
-
-        // Rotate bone (tweak sensitivity as you like)
-        selectedBone.rotation.y += x * 0.08;
-        selectedBone.rotation.x += y * 0.08;
-    }
-
-    // DRAG bone toward right controller
-    const controller = rightController;
-    if (controller) {
-        const controllerPos = new THREE.Vector3()
-            .setFromMatrixPosition(controller.matrixWorld);
-
-        const bonePos = new THREE.Vector3()
-            .setFromMatrixPosition(selectedBone.matrixWorld);
-
-        const offset = controllerPos.sub(bonePos);
-        selectedBone.position.add(offset.multiplyScalar(0.3)); // 0.3 = “drag strength”
-    }
-}
-
-/* -----------------------------
-    VRM Loading + Collider Setup
------------------------------ */
-
-async function loadVRM(event) {
-    const file = event.target.files[0];
-    if (!file) return;
-
-    const arrayBuffer = await file.arrayBuffer();
-    loader.parse(arrayBuffer, '', (gltf) => {
-
-        if (currentVRM) {
-            scene.remove(currentVRM.scene);
-            VRMUtils.deepDispose(currentVRM.scene);
+            document.getElementById("fileInput").addEventListener("change", loadVRM);
+            window.addEventListener("resize", onWindowResize);
         }
 
-        currentVRM = gltf.userData.vrm;
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
 
-        scene.add(currentVRM.scene);
-        currentVRM.scene.rotation.y = Math.PI;
+        async function loadVRM(event) {
+            const file = event.target.files[0];
+            if (!file) return;
 
-        createBoneColliders(currentVRM);
-    });
-}
+            const buffer = await file.arrayBuffer();
+            loader.parse(buffer, "", (gltf) => {
+                if (currentVRM) {
+                    scene.remove(currentVRM.scene);
+                    VRMUtils.deepDispose(currentVRM.scene);
+                }
 
-/* -----------------------------
-    Render Loop
------------------------------ */
+                currentVRM = gltf.userData.vrm;
 
-function render() {
-    if (currentVRM) {
-        updateBoneManipulation();
-        currentVRM.update(1 / 60);
-    }
-    renderer.render(scene, camera);
-}
+                VRMUtils.removeUnnecessaryJoints(currentVRM.scene);
+                scene.add(currentVRM.scene);
 
-</script>
+                currentVRM.scene.rotation.y = Math.PI;
+            });
+        }
+
+        function animate() {
+            renderer.setAnimationLoop(() => {
+                if (currentVRM) currentVRM.update(1 / 60);
+                renderer.render(scene, camera);
+            });
+        }
+    </script>
+</body>
+</html>
