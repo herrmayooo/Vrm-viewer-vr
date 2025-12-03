@@ -26,14 +26,12 @@
         import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.163/build/three.module.js";
         import { OrbitControls } from "https://cdn.jsdelivr.net/npm/three@0.163/examples/jsm/controls/OrbitControls.js";
         import { VRButton } from "https://cdn.jsdelivr.net/npm/three@0.163/examples/jsm/webxr/VRButton.js";
-        import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.163/examples/jsm/loaders/GLTFLoader.js";
-        import { VRMLoaderPlugin, VRMUtils } from "https://cdn.jsdelivr.net/npm/@pixiv/three-vrm@2.0.6/lib/three-vrm.module.js";
+        import { VRMLoader } from "https://cdn.jsdelivr.net/npm/@pixiv/three-vrm@2.0.6/lib/three-vrm.module.js";
 
         let scene, camera, renderer, controls;
         let currentVRM = null;
 
-        const loader = new GLTFLoader();
-        loader.register((parser) => new VRMLoaderPlugin(parser));
+        const vrmLoader = new VRMLoader();
 
         init();
         animate();
@@ -77,24 +75,31 @@
             if (!file) return;
 
             const buffer = await file.arrayBuffer();
-            loader.parse(buffer, "", (gltf) => {
+            vrmLoader.loadAsync(URL.createObjectURL(file)).then((vrm) => {
                 if (currentVRM) {
                     scene.remove(currentVRM.scene);
-                    VRMUtils.deepDispose(currentVRM.scene);
                 }
 
-                currentVRM = gltf.userData.vrm;
-
-                VRMUtils.removeUnnecessaryJoints(currentVRM.scene);
+                currentVRM = vrm;
+                currentVRM.scene.rotation.y = Math.PI; // Rotate model to face the correct direction
                 scene.add(currentVRM.scene);
 
-                currentVRM.scene.rotation.y = Math.PI;
+                // Ensure animations are playing
+                currentVRM.scene.traverse((child) => {
+                    if (child.isMesh) child.castShadow = true;
+                });
+
+                // Handle any other VRM-specific logic (like applying physics, animations, etc.)
+            }).catch((error) => {
+                console.error("Error loading VRM file:", error);
             });
         }
 
         function animate() {
             renderer.setAnimationLoop(() => {
-                if (currentVRM) currentVRM.update(1 / 60);
+                if (currentVRM) {
+                    currentVRM.update(1 / 60); // Update the VRM animation if necessary
+                }
                 renderer.render(scene, camera);
             });
         }
