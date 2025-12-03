@@ -3,24 +3,73 @@
 <head>
     <meta charset="UTF-8" />
     <title>VRM Viewer VR</title>
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
     <style>
-        body { margin: 0; overflow: hidden; }
+        body { margin: 0; overflow: hidden; font-family: Arial, sans-serif; }
         #fileInput {
             position: absolute;
             top: 10px;
             left: 10px;
-            z-index: 10;
-            background: white;
+            z-index: 11;
+            background: rgba(255,255,255,0.95);
             padding: 8px;
             border-radius: 6px;
             font-size: 14px;
+        }
+
+        #posePanel {
+            position: absolute;
+            top: 60px;
+            left: 10px;
+            z-index: 11;
+            background: rgba(255,255,255,0.95);
+            padding: 10px;
+            border-radius: 6px;
+            width: 260px;
+            font-size: 13px;
+            box-sizing: border-box;
+        }
+
+        #posePanel label { display:block; margin-top:8px; }
+        #posePanel input[type="range"] { width: 100%; }
+        #posePanel select, #posePanel button {
+            width: 100%;
+            margin-top: 6px;
+            padding: 6px;
+            box-sizing: border-box;
+        }
+
+        .small {
+            font-size: 12px;
+            color: #333;
         }
     </style>
 </head>
 
 <body>
     <!-- VRM Loader -->
-    <input type="file" id="fileInput" accept=".vrm" />
+    <div id="fileInput">
+        <input type="file" id="file" accept=".vrm" />
+    </div>
+
+    <div id="posePanel" hidden>
+        <div class="small">Pose controls</div>
+        <label for="boneSelect">Bone</label>
+        <select id="boneSelect">
+            <!-- will be populated -->
+        </select>
+
+        <label for="pitchRange">Pitch (X) <span id="pitchValue">0°</span></label>
+        <input type="range" id="pitchRange" min="-180" max="180" step="1" value="0">
+
+        <label for="yawRange">Yaw (Y) <span id="yawValue">0°</span></label>
+        <input type="range" id="yawRange" min="-180" max="180" step="1" value="0">
+
+        <label for="rollRange">Roll (Z) <span id="rollValue">0°</span></label>
+        <input type="range" id="rollRange" min="-180" max="180" step="1" value="0">
+
+        <button id="resetPose">Reset Pose</button>
+    </div>
 
     <script type="module">
         import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.163/build/three.module.js";
@@ -30,6 +79,7 @@
 
         let scene, camera, renderer, controls;
         let currentVRM = null;
+        let vrmBlobUrl = null;
 
         const vrmLoader = new VRMLoader();
 
@@ -52,16 +102,26 @@
             document.body.appendChild(VRButton.createButton(renderer));
 
             controls = new OrbitControls(camera, renderer.domElement);
+            controls.target.set(0, 1.4, 0);
+            controls.update();
 
-            const light = new THREE.DirectionalLight(0xffffff, 1);
-            light.position.set(1, 1, 1);
-            scene.add(light);
+            const dir = new THREE.DirectionalLight(0xffffff, 1.0);
+            dir.position.set(1, 1, 1);
+            scene.add(dir);
 
-            const ambient = new THREE.HemisphereLight(0xffffff, 0x444444, 1);
+            const ambient = new THREE.HemisphereLight(0xffffff, 0x444444, 1.0);
             scene.add(ambient);
 
-            document.getElementById("fileInput").addEventListener("change", loadVRM);
             window.addEventListener("resize", onWindowResize);
+
+            document.getElementById("file").addEventListener("change", loadVRM);
+
+            // Pose UI hookup
+            document.getElementById("boneSelect").addEventListener("change", onBoneSelected);
+            document.getElementById("pitchRange").addEventListener("input", onSliderChange);
+            document.getElementById("yawRange").addEventListener("input", onSliderChange);
+            document.getElementById("rollRange").addEventListener("input", onSliderChange);
+            document.getElementById("resetPose").addEventListener("click", resetPose);
         }
 
         function onWindowResize() {
@@ -74,32 +134,232 @@
             const file = event.target.files[0];
             if (!file) return;
 
-            const buffer = await file.arrayBuffer();
-            vrmLoader.loadAsync(URL.createObjectURL(file)).then((vrm) => {
-                if (currentVRM) {
-                    scene.remove(currentVRM.scene);
-                }
+            // remove previous VRM
+            if (currentVRM) {
+                disposeCurrentVRM();
+                currentVRM = null;
+            }
+
+            if (vrmBlobUrl) {
+                try { URL.revokeObjectURL(vrmBlobUrl); } catch (e) { /* ignore */ }
+                vrmBlobUrl = null;
+            }
+
+            vrmBlobUrl = URL.createObjectURL(file);
+
+            try {
+                // loadAsync with blob url
+                const vrm = await vrmLoader.loadAsync(vrmBlobUrl);
+
+                // revoke blob url (we no longer need it)
+                try { URL.revokeObjectURL(vrmBlobUrl); } catch (e) { /* ignore */ }
+                vrmBlobUrl = null;
 
                 currentVRM = vrm;
-                currentVRM.scene.rotation.y = Math.PI; // Rotate model to face the correct direction
-                scene.add(currentVRM.scene);
 
-                // Ensure animations are playing
-                currentVRM.scene.traverse((child) => {
-                    if (child.isMesh) child.castShadow = true;
-                });
+                // Ensure model faces camera
+                if (currentVRM.scene) {
+                    currentVRM.scene.rotation.y = Math.PI; // face forward
+                    currentVRM.scene.position.set(0, 0, 0);
+                    currentVRM.scene.traverse((child) => {
+                        if (child.isMesh) {
+                            child.castShadow = true;
+                            child.receiveShadow = true;
+                        }
+                    });
+                    scene.add(currentVRM.scene);
+                }
 
-                // Handle any other VRM-specific logic (like applying physics, animations, etc.)
-            }).catch((error) => {
+                // Expose humanoid bones in the UI if available
+                populateBoneSelect();
+
+                // Show pose panel
+                document.getElementById("posePanel").hidden = false;
+
+                // Reset camera target
+                controls.target.set(0, 1.4, 0);
+                controls.update();
+            } catch (error) {
                 console.error("Error loading VRM file:", error);
-            });
+                alert("Failed to load VRM: " + (error && error.message ? error.message : error));
+            }
         }
 
-        function animate() {
-            renderer.setAnimationLoop(() => {
-                if (currentVRM) {
-                    currentVRM.update(1 / 60); // Update the VRM animation if necessary
+        function disposeCurrentVRM() {
+            try {
+                if (!currentVRM) return;
+                // remove from scene
+                if (currentVRM.scene && scene) scene.remove(currentVRM.scene);
+
+                // dispose geometries and materials to free memory
+                currentVRM.scene.traverse((child) => {
+                    if (child.isMesh) {
+                        if (child.geometry) child.geometry.dispose();
+                        if (child.material) {
+                            const mat = child.material;
+                            // if material is an array
+                            if (Array.isArray(mat)) {
+                                mat.forEach(m => {
+                                    disposeMaterial(m);
+                                });
+                            } else {
+                                disposeMaterial(mat);
+                            }
+                        }
+                    }
+                });
+            } catch (e) {
+                console.warn("Error disposing VRM:", e);
+            }
+        }
+
+        function disposeMaterial(material) {
+            if (!material) return;
+            // dispose textures
+            for (const key in material) {
+                const value = material[key];
+                if (value && typeof value === 'object' && 'minFilter' in value) {
+                    try { value.dispose(); } catch (e) { /* ignore */ }
                 }
+            }
+            try { material.dispose(); } catch (e) { /* ignore */ }
+        }
+
+        function populateBoneSelect() {
+            const select = document.getElementById("boneSelect");
+            select.innerHTML = "";
+
+            if (!currentVRM || !currentVRM.humanoid) {
+                const opt = document.createElement("option");
+                opt.textContent = "No humanoid found";
+                opt.value = "";
+                select.appendChild(opt);
+                return;
+            }
+
+            // List common humanoid bone names in VRM (VRM human bone names from HumanoidBoneName)
+            const boneNames = [
+                "hips", "spine", "chest", "upperChest", "neck", "head",
+                "leftUpperArm", "leftLowerArm", "leftHand",
+                "rightUpperArm", "rightLowerArm", "rightHand",
+                "leftUpperLeg", "leftLowerLeg", "leftFoot",
+                "rightUpperLeg", "rightLowerLeg", "rightFoot"
+            ];
+
+            // Filter to bones that exist
+            const available = [];
+            for (const name of boneNames) {
+                try {
+                    const node = currentVRM.humanoid.getBoneNode(name);
+                    if (node) available.push(name);
+                } catch (e) {
+                    // some VRM versions might throw on unknown names, ignore
+                }
+            }
+
+            if (available.length === 0) {
+                const opt = document.createElement("option");
+                opt.textContent = "No supported bones found";
+                opt.value = "";
+                select.appendChild(opt);
+                return;
+            }
+
+            for (const name of available) {
+                const opt = document.createElement("option");
+                opt.textContent = name;
+                opt.value = name;
+                select.appendChild(opt);
+            }
+
+            // Select first by default and load values
+            select.value = available[0];
+            onBoneSelected();
+        }
+
+        function onBoneSelected() {
+            if (!currentVRM) return;
+            const boneName = document.getElementById("boneSelect").value;
+            const bone = getBoneNode(boneName);
+            if (!bone) {
+                setSlidersTo(0,0,0);
+                return;
+            }
+
+            // Read bone rotation in local space and convert to degrees
+            const e = bone.rotation; // THREE.Euler in radians
+            const x = THREE.MathUtils.radToDeg(e.x);
+            const y = THREE.MathUtils.radToDeg(e.y);
+            const z = THREE.MathUtils.radToDeg(e.z);
+            setSlidersTo(x, y, z);
+        }
+
+        function onSliderChange() {
+            const boneName = document.getElementById("boneSelect").value;
+            if (!boneName || !currentVRM) return;
+            const bone = getBoneNode(boneName);
+            if (!bone) return;
+
+            const px = parseFloat(document.getElementById("pitchRange").value);
+            const py = parseFloat(document.getElementById("yawRange").value);
+            const pz = parseFloat(document.getElementById("rollRange").value);
+
+            // Update display values
+            document.getElementById("pitchValue").textContent = px.toFixed(0) + "°";
+            document.getElementById("yawValue").textContent = py.toFixed(0) + "°";
+            document.getElementById("rollValue").textContent = pz.toFixed(0) + "°";
+
+            // Convert degrees to radians and apply as local rotation (order XYZ)
+            bone.rotation.set(
+                THREE.MathUtils.degToRad(px),
+                THREE.MathUtils.degToRad(py),
+                THREE.MathUtils.degToRad(pz)
+            );
+        }
+
+        function getBoneNode(boneName) {
+            if (!currentVRM || !currentVRM.humanoid || !boneName) return null;
+            try {
+                return currentVRM.humanoid.getBoneNode(boneName);
+            } catch (e) {
+                return null;
+            }
+        }
+
+        function setSlidersTo(x, y, z) {
+            document.getElementById("pitchRange").value = x;
+            document.getElementById("yawRange").value = y;
+            document.getElementById("rollRange").value = z;
+            document.getElementById("pitchValue").textContent = Math.round(x) + "°";
+            document.getElementById("yawValue").textContent = Math.round(y) + "°";
+            document.getElementById("rollValue").textContent = Math.round(z) + "°";
+        }
+
+        function resetPose() {
+            const boneName = document.getElementById("boneSelect").value;
+            if (!boneName || !currentVRM) return;
+            const bone = getBoneNode(boneName);
+            if (!bone) return;
+            bone.rotation.set(0,0,0);
+            setSlidersTo(0,0,0);
+        }
+
+        let lastTime = null;
+        function animate() {
+            renderer.setAnimationLoop((time) => {
+                // time is in milliseconds, convert to seconds delta
+                if (lastTime === null) lastTime = time;
+                const deltaSeconds = Math.min(0.1, (time - lastTime) / 1000);
+                lastTime = time;
+
+                if (currentVRM && typeof currentVRM.update === "function") {
+                    try {
+                        currentVRM.update(deltaSeconds);
+                    } catch (e) {
+                        // some builds may not require update; ignore failures
+                    }
+                }
+
                 renderer.render(scene, camera);
             });
         }
