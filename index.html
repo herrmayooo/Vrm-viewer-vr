@@ -1,0 +1,158 @@
+<script type="module">
+// … keep your existing imports & init code … //
+
+/* -----------------------------
+    Bone Interaction System
+----------------------------- */
+
+let boneSpheres = [];
+let selectedBone = null;
+
+function createBoneColliders(vrm) {
+    boneSpheres.forEach(s => scene.remove(s));
+    boneSpheres = [];
+
+    const bones = vrm.humanoid.humanBones;
+
+    for (const name in bones) {
+        const boneNode = vrm.humanoid.getBoneNode(name);
+        if (!boneNode) continue;
+
+        const sphere = new THREE.Mesh(
+            new THREE.SphereGeometry(0.03),
+            new THREE.MeshBasicMaterial({ color: 0x00ffff })
+        );
+
+        sphere.position.set(0, 0, 0);
+        boneNode.add(sphere);   // attach to bone
+        sphere.userData.boneName = name;
+        boneSpheres.push(sphere);
+    }
+}
+
+let raycaster = new THREE.Raycaster();
+let tempMatrix = new THREE.Matrix4();
+
+/* -----------------------------
+    Controller Setup
+----------------------------- */
+
+function setupControllers() {
+    leftController = renderer.xr.getController(0);
+    rightController = renderer.xr.getController(1);
+
+    scene.add(leftController);
+    scene.add(rightController);
+
+    leftController.addEventListener("selectstart", () => pickBone(leftController));
+    rightController.addEventListener("selectstart", () => pickBone(rightController));
+
+    leftController.addEventListener("selectend", () => dropBone(leftController));
+    rightController.addEventListener("selectend", () => dropBone(rightController));
+}
+
+/* -----------------------------
+    Bone Picking
+----------------------------- */
+
+function pickBone(controller) {
+    if (!currentVRM) return;
+
+    // Convert controller orientation to a ray
+    tempMatrix.identity().extractRotation(controller.matrixWorld);
+    const rayOrigin = new THREE.Vector3().setFromMatrixPosition(controller.matrixWorld);
+    const rayDirection = new THREE.Vector3(0, 0, -1).applyMatrix4(tempMatrix);
+
+    raycaster.set(rayOrigin, rayDirection);
+
+    const intersects = raycaster.intersectObjects(boneSpheres, true);
+
+    if (intersects.length > 0) {
+        selectedBone = currentVRM.humanoid.getBoneNode(
+            intersects[0].object.userData.boneName
+        );
+
+        // highlight picked bone
+        intersects[0].object.material.color.set(0xff0000);
+    }
+}
+
+function dropBone(controller) {
+    selectedBone = null;
+}
+
+/* -----------------------------
+    Joystick Bone Manipulation
+----------------------------- */
+
+function updateBoneManipulation() {
+    if (!selectedBone) return;
+
+    const session = renderer.xr.getSession();
+    if (!session) return;
+
+    const rightSource = session.inputSources[1];
+
+    if (rightSource && rightSource.gamepad) {
+        const gp = rightSource.gamepad;
+
+        const x = gp.axes[2]; // right joystick horizontal
+        const y = gp.axes[3]; // right joystick vertical
+
+        // Rotate bone (tweak sensitivity as you like)
+        selectedBone.rotation.y += x * 0.08;
+        selectedBone.rotation.x += y * 0.08;
+    }
+
+    // DRAG bone toward right controller
+    const controller = rightController;
+    if (controller) {
+        const controllerPos = new THREE.Vector3()
+            .setFromMatrixPosition(controller.matrixWorld);
+
+        const bonePos = new THREE.Vector3()
+            .setFromMatrixPosition(selectedBone.matrixWorld);
+
+        const offset = controllerPos.sub(bonePos);
+        selectedBone.position.add(offset.multiplyScalar(0.3)); // 0.3 = “drag strength”
+    }
+}
+
+/* -----------------------------
+    VRM Loading + Collider Setup
+----------------------------- */
+
+async function loadVRM(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    const arrayBuffer = await file.arrayBuffer();
+    loader.parse(arrayBuffer, '', (gltf) => {
+
+        if (currentVRM) {
+            scene.remove(currentVRM.scene);
+            VRMUtils.deepDispose(currentVRM.scene);
+        }
+
+        currentVRM = gltf.userData.vrm;
+
+        scene.add(currentVRM.scene);
+        currentVRM.scene.rotation.y = Math.PI;
+
+        createBoneColliders(currentVRM);
+    });
+}
+
+/* -----------------------------
+    Render Loop
+----------------------------- */
+
+function render() {
+    if (currentVRM) {
+        updateBoneManipulation();
+        currentVRM.update(1 / 60);
+    }
+    renderer.render(scene, camera);
+}
+
+</script>
